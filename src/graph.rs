@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
     },
     thread,
 };
@@ -60,70 +60,30 @@ where
 {
     let iterations = Arc::new(AtomicUsize::new(0));
     let cpus = num_cpus::get();
-    let queue = {
-        let mut queue = Vec::new();
-        queue.push(start);
-        Arc::new(Mutex::new(queue))
-    };
+    let queue = Arc::new(Mutex::new(vec![start]));
+    let current_tasks = Arc::new(AtomicUsize::new(1)); // 1 because we added `start`
     let visited = Arc::new(Mutex::new(HashSet::new()));
 
-    let (s_queue, r_queue) = unbounded();
     let (s_tasks, r_tasks) = unbounded();
     let (s, r) = unbounded();
 
-    let _queue_handler = {
-        let queue = queue.clone();
-        let r_queue = r_queue.clone();
-        let started_pair = started_pair.clone();
-        thread::spawn(move || {
-            let mut notified = false;
-            while let Ok(msg) = r_queue.recv() {
-                debug!("[Queue handler] Receiving msg...");
-                queue.lock().unwrap().push(msg);
-                debug!("[Queue handler] Added msg to queue...");
-                if !notified {
-                    let (lock, cvar) = &*started_pair;
-                    let mut started = lock.lock().unwrap();
-                    *started = true;
-                    cvar.notify_one();
-                    notified = true;
-                    debug!("[Queue handler] Notifying started=true");
-                }
-            }
-        })
-    };
-
     let _dispatcher = {
         let queue = queue.clone();
-        let s_tasks = s_tasks.clone();
         let s = s.clone();
         let iterations = iterations.clone();
-        let free_tasks = free_tasks.clone();
+        let current_tasks = current_tasks.clone();
         thread::spawn(move || {
-            debug!("[Dispatcher] Waiting to start...");
-            let (lock, cvar) = &*started_pair;
-            let mut started = lock.lock().unwrap();
-            while !*started {
-                started = cvar.wait(started).unwrap();
-            }
             debug!("[Dispatcher] Started");
             loop {
-                if free_tasks.load(Ordering::SeqCst) > 0 {
-                    let a = queue.lock().unwrap().pop();
-                    if let Some(msg) = a {
-                        debug!("[Dispatcher] Dispatching msg.");
-                        s_tasks.send(msg).unwrap();
-                    } else {
-                        if free_tasks.load(Ordering::SeqCst) == cpus {
-                            debug!("[Dispatcher] Free tasks and empty queue...");
-                            debug!("==> cpus={}", cpus);
-                            debug!("==> free_tasks={}", free_tasks.load(Ordering::SeqCst));
-                            debug!("==> len(queue)={}", queue.lock().unwrap().len());
-                            let i = iterations.load(Ordering::SeqCst);
-                            s.send(Err(("No solution found :C".to_string(), i)))
-                                .unwrap();
-                        }
-                    }
+                let msg = queue.lock().unwrap().pop();
+                if let Some(node) = msg {
+                    debug!("[Dispatcher] Dispatching node");
+                    s_tasks.send(node).unwrap();
+                } else if current_tasks.load(Ordering::SeqCst) == 0 {
+                    debug!("[Dispatcher] current_tasks==0, stopping the solver...");
+                    let i = iterations.load(Ordering::SeqCst);
+                    s.send(Err(("No solution found :C".to_string(), i)))
+                        .unwrap();
                 }
             }
         })
@@ -131,21 +91,20 @@ where
 
     let _tasks = (0..cpus)
         .map(|i| {
+            let queue = queue.clone();
             let s = s.clone();
             let r_tasks = r_tasks.clone();
-            let s_queue = s_queue.clone();
             let graph = graph.clone();
-            let free_tasks = free_tasks.clone();
             let visited = visited.clone();
             let iterations = iterations.clone();
+            let current_tasks = current_tasks.clone();
             thread::spawn(move || {
                 while let Ok(mut node) = r_tasks.recv() {
                     debug!("[Handler {i}] Task received");
                     iterations.fetch_add(1, Ordering::SeqCst);
-                    free_tasks.fetch_add(1, Ordering::SeqCst);
                     match graph.check_goal(&mut node) {
                         GraphControl::Finish => {
-                            debug!("[Handler {i}] Sending FINISH...");
+                            debug!("[Handler {i}] Sending FINISH event");
                             let i = iterations.load(Ordering::SeqCst);
                             s.send(Ok((node, i))).unwrap();
                             break;
@@ -156,18 +115,18 @@ where
                                 if visited.lock().unwrap().contains(&neighbour) {
                                     continue;
                                 }
-                                debug!("[Handler {i}] Sending neighbour...");
-                                s_queue.send(neighbour).unwrap();
+                                debug!("[Handler {i}] Queueing discovered neighbour");
+                                queue.lock().unwrap().push(neighbour);
+                                current_tasks.fetch_add(1, Ordering::SeqCst);
                             }
                         }
                     }
                     visited.lock().unwrap().insert(node);
+                    current_tasks.fetch_sub(1, Ordering::SeqCst);
                 }
-                free_tasks.fetch_sub(1, Ordering::SeqCst);
             })
         })
         .collect_vec();
 
-    s_queue.send(start).unwrap();
     r.recv().unwrap()
 }

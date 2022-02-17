@@ -79,8 +79,11 @@ mod tests {
    6   4";
         let board = Sudoku::from_text(text).unwrap();
         println!("{board}");
-        // let (solved_board, time) = solve_sudoku(board.clone()).unwrap();
-        let (solved_board, time) = solve_sudoku_parallel(board).unwrap();
-        println!("({time} iterations)\n{solved_board}");
+        let (expected_solution, time_sequential) = solve_sudoku(board.clone()).unwrap();
+        let (solved_board, time_parallel) = solve_sudoku_parallel(board).unwrap();
+        println!("Sequential time: {time_sequential}");
+        println!("Parallel time  : {time_parallel}");
+        println!("{solved_board}");
+        assert_eq!(expected_solution, solved_board);
     }
 }
