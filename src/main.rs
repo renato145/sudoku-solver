@@ -26,8 +26,10 @@ fn main() {
         Ok(board) => {
             println!("Input:\n{board}");
             let res = if parallel {
+                println!("Solving in parallel mode...");
                 solve_sudoku_parallel(board)
             } else {
+                println!("Solving in sequential mode...");
                 solve_sudoku(board)
             };
             match res {
