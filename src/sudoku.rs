@@ -263,7 +263,7 @@ mod tests {
 685123479
 734589162
 219746538
-586472 1
+5  472 1
 342951687
 197638254";
         let board = Sudoku::from_text(text).unwrap();
@@ -280,7 +280,7 @@ mod tests {
 685123479
 734589162
 219746538
-586472 1
+5  472 1
 342951687
 197638254";
         let board = Sudoku::from_text(text).unwrap();
@@ -297,7 +297,7 @@ mod tests {
 685123479
 734589162
 219746538
-586472 1
+5  472 1
 342951687
 197638254";
         let board = Sudoku::from_text(text).unwrap();
@@ -319,7 +319,7 @@ mod tests {
 685123479
 734589162
 219746538
-586472 1
+5  472 1
 342951687
 197638254";
         let board = Sudoku::from_text(text).unwrap();

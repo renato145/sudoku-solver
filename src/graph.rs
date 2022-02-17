@@ -3,7 +3,7 @@ use std::{
     collections::HashSet,
     hash::Hash,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
     },
 };
@@ -59,6 +59,7 @@ where
     let queue = Arc::new(Mutex::new(vec![start]));
     let current_tasks = Arc::new(AtomicUsize::new(1)); // 1 because we added `start`
     let visited = Arc::new(Mutex::new(HashSet::new()));
+    let finished = Arc::new(AtomicBool::new(false));
 
     let (s, r) = mpsc::channel();
 
@@ -70,9 +71,13 @@ where
             let visited = visited.clone();
             let iterations = iterations.clone();
             let current_tasks = current_tasks.clone();
+            let finished = finished.clone();
             scope.spawn(move |_| {
                 debug!("[Handler {i}] Started");
                 loop {
+                    if finished.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let msg = queue.lock().unwrap().pop();
                     if let Some(mut node) = msg {
                         debug!("[Handler {i}] Task received");
@@ -80,6 +85,7 @@ where
                         match graph.check_goal(&mut node) {
                             GraphControl::Finish => {
                                 debug!("[Handler {i}] Sending FINISH event");
+                                finished.fetch_or(true, Ordering::SeqCst);
                                 let i = iterations.load(Ordering::SeqCst);
                                 s.send(Ok((node, i))).unwrap();
                                 break;
@@ -100,6 +106,7 @@ where
                         current_tasks.fetch_sub(1, Ordering::SeqCst);
                     } else if current_tasks.load(Ordering::SeqCst) == 0 {
                         debug!("[Handler {i}] current_tasks==0, stopping the solver...");
+                        finished.fetch_or(true, Ordering::SeqCst);
                         let i = iterations.load(Ordering::SeqCst);
                         s.send(Err(("No solution found :C".to_string(), i)))
                             .unwrap();
